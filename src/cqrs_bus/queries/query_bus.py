@@ -66,11 +66,11 @@ class QueryBus:
         if _prometheus:
             _query_total.labels(query_type=query_name).inc()
 
-        start_time = time.time()
+        start_time = time.monotonic()
 
         try:
             result = await handler.handle(query)
-            duration = time.time() - start_time
+            duration = time.monotonic() - start_time
 
             if _prometheus:
                 _query_duration.labels(query_type=query_name).observe(duration)
@@ -86,7 +86,7 @@ class QueryBus:
             return result
 
         except Exception as e:
-            duration = time.time() - start_time
+            duration = time.monotonic() - start_time
             error_type = type(e).__name__
 
             if _prometheus:

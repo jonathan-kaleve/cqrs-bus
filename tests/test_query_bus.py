@@ -153,7 +153,7 @@ class TestQueryBusDispatch:
         bus.register(SampleQuery, SampleHandler())
 
         with patch("cqrs_bus.queries.query_bus.time") as mock_time:
-            mock_time.time.side_effect = [0.0, 5.0]
+            mock_time.monotonic.side_effect = [0.0, 5.0]
             with caplog.at_level(logging.INFO, logger="cqrs_bus.queries.query_bus"):
                 await bus.dispatch(SampleQuery(value=1))
 

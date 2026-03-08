@@ -35,6 +35,16 @@ class MissingAnnotationHandler:
         self.service_a = service_a
 
 
+class VarArgsHandler:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+class MixedVarArgsHandler:
+    def __init__(self, service_a: ServiceA, *args, **kwargs):
+        self.service_a = service_a
+
+
 class TestInspectHandlerInit:
     def test_no_dependencies(self):
         resolver = DependencyResolver()
@@ -66,6 +76,16 @@ class TestInspectHandlerInit:
         BadInit.__init__ = None  # type: ignore[method-assign]
         with pytest.raises(MissingDependencyError, match="Failed to inspect"):
             resolver.inspect_handler_init(BadInit)
+
+    def test_var_positional_and_var_keyword_are_ignored(self):
+        resolver = DependencyResolver()
+        deps = resolver.inspect_handler_init(VarArgsHandler)
+        assert deps == {}
+
+    def test_mixed_varargs_only_returns_typed_params(self):
+        resolver = DependencyResolver()
+        deps = resolver.inspect_handler_init(MixedVarArgsHandler)
+        assert deps == {"service_a": ServiceA}
 
 
 class TestResolveDependencies:
@@ -104,6 +124,24 @@ class TestResolveDependencies:
             resolved = resolver.resolve_dependencies(SingleDepHandler, {"service_a": "wrong_type"})
         assert any("expected ServiceA" in r.message for r in caplog.records)
         assert resolved == {"service_a": "wrong_type"}  # still resolves; warning only
+
+    def test_isinstance_type_error_is_silenced(self):
+        # A type whose __instancecheck__ raises TypeError should not propagate — the
+        # dependency is still resolved (the warning is just skipped).
+        class _RaisingMeta(type):
+            def __instancecheck__(cls, instance):
+                raise TypeError("custom isinstance error")
+
+        class _BadType(metaclass=_RaisingMeta):
+            pass
+
+        class _HandlerWithBadType:
+            def __init__(self, dep: _BadType):
+                self.dep = dep
+
+        resolver = DependencyResolver()
+        resolved = resolver.resolve_dependencies(_HandlerWithBadType, {"dep": object()})
+        assert "dep" in resolved
 
 
 class TestCreateHandlerInstance:

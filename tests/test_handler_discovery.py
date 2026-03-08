@@ -1,6 +1,8 @@
 import importlib
 import logging
+import pkgutil
 from abc import abstractmethod
+from typing import Generic, TypeVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -142,6 +144,12 @@ class TestIsValidHandler:
 
         assert not self.discovery._is_valid_handler(MyQueryHandler, CommandHandler, MyQueryHandler.__module__)
 
+    def test_handles_issubclass_type_error_gracefully(self):
+        # A generic alias (e.g. list[int]) raises TypeError in issubclass() — the
+        # except branch on lines 119-120 must catch it and return False.
+        result = self.discovery._is_valid_handler(list[int], CommandHandler, "some.module")
+        assert result is False
+
 
 # ---------------------------------------------------------------------------
 # _extract_command_or_query_type
@@ -183,6 +191,22 @@ class TestExtractCommandOrQueryType:
         # __orig_bases__ won't have CommandHandler or QueryHandler as origin
         with pytest.raises(InvalidHandlerError):
             self.discovery._extract_command_or_query_type(BadHandler)
+
+    def test_extracts_type_via_intermediate_generic_base(self):
+        # Exercises the fallback branch (lines 154-161) that handles handlers
+        # inheriting from an intermediate generic base rather than directly from
+        # CommandHandler/QueryHandler.
+        T = TypeVar("T")
+
+        class IntermediateBase(Generic[T], CommandHandler[T, str]):
+            pass
+
+        class ConcreteHandler(IntermediateBase[_SampleCommand]):
+            async def handle(self, command: _SampleCommand) -> str:
+                return "ok"
+
+        result = self.discovery._extract_command_or_query_type(ConcreteHandler)
+        assert result is _SampleCommand
 
 
 # ---------------------------------------------------------------------------
@@ -241,6 +265,36 @@ class TestModuleSkipLogging:
 
         assert result is False
         assert any("Skipping" in r.message for r in caplog.records)
+
+
+class TestModuleFilterSegmentMatching:
+    def test_subdir_filter_requires_exact_path_segment(self):
+        # A module whose name contains "commands" as part of a longer segment
+        # (e.g. "commands_extra") must NOT be scanned.
+        discovery = HandlerDiscovery("fake_app")
+        imported: list[str] = []
+        original_import = importlib.import_module
+
+        def fake_walk(path, prefix=""):
+            yield (None, "fake_app.commands_extra.handler", False)
+
+        def tracking_import(name, *args, **kwargs):
+            imported.append(name)
+            return original_import(name, *args, **kwargs)
+
+        with patch("cqrs_bus.discovery.handler_discovery.pkgutil.walk_packages", side_effect=fake_walk):
+            with patch("cqrs_bus.discovery.handler_discovery.importlib.import_module", side_effect=tracking_import):
+                discovery._scan_for_handlers("commands", CommandHandler)
+
+        # The base package "fake_app" is imported to get __path__; the fake module must not be.
+        assert "fake_app.commands_extra.handler" not in imported
+
+    def test_subdir_filter_matches_exact_segment(self):
+        # Modules with "commands" as an exact path segment are still scanned.
+        discovery = HandlerDiscovery("fake_app")
+        registry = discovery.discover_all_handlers()
+        # fake_app.commands.create_item_handler and fake_app.shared.commands.shared_command_handler
+        assert registry.get_command_handler_count() == 2
 
 
 class TestScanErrorResilience:

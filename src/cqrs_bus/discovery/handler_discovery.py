@@ -50,33 +50,30 @@ class HandlerDiscovery:
         try:
             base_module = importlib.import_module(self.base_package)
         except ImportError as e:
-            logger.error(f"Failed to import base package {self.base_package}: {e}")
+            logger.error("Failed to import base package %s: %s", self.base_package, e)
             return handlers
 
         if not hasattr(base_module, "__path__"):
-            logger.error(f"Base package {self.base_package} has no __path__")
+            logger.error("Base package %s has no __path__", self.base_package)
             return handlers
 
         for _importer, module_name, _is_pkg in pkgutil.walk_packages(
             base_module.__path__, prefix=f"{self.base_package}."
         ):
             module_parts = module_name.split(".")
-            if "shared" in module_parts and f".{subdir}" not in module_name:
-                continue
-
-            if subdir not in module_name:
+            if subdir not in module_parts:
                 continue
 
             try:
                 module = importlib.import_module(module_name)
                 handlers.extend(self._scan_module(module, module_name, base_class))
             except ImportError as e:
-                logger.error(f"Failed to import {module_name}: {e}")
+                logger.error("Failed to import %s: %s", module_name, e)
                 logger.debug(traceback.format_exc())
                 if self.strict:
                     raise
             except Exception as e:
-                logger.error(f"Unexpected error scanning {module_name}: {e}")
+                logger.error("Unexpected error scanning %s: %s", module_name, e)
                 logger.debug(traceback.format_exc())
                 if self.strict:
                     raise
@@ -105,7 +102,7 @@ class HandlerDiscovery:
                 logger.debug(f"Discovered {obj.__name__} for {command_or_query_type.__name__} deps={dependencies}")
 
             except Exception as e:
-                logger.error(f"Error processing handler {name} in {module_name}: {e}")
+                logger.error("Error processing handler %s in %s: %s", name, module_name, e)
                 logger.debug(traceback.format_exc())
                 if self.strict:
                     raise
