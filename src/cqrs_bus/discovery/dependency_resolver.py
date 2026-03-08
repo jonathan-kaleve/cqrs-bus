@@ -17,6 +17,9 @@ class DependencyResolver:
             if param_name == "self":
                 continue
 
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+
             if param.annotation == inspect.Parameter.empty:
                 raise MissingDependencyError(
                     f"{handler_class.__name__}.__init__ parameter '{param_name}' "
