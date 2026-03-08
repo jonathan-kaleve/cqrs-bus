@@ -1,10 +1,9 @@
 import inspect
-import logging
-from typing import Any, get_origin
+from typing import Any, Union, get_args, get_origin
 
 from cqrs_bus.discovery.exceptions import MissingDependencyError
 
-logger = logging.getLogger(__name__)
+_SENTINEL = object()
 
 
 class DependencyResolver:
@@ -33,37 +32,63 @@ class DependencyResolver:
 
         return dependencies
 
-    def resolve_dependencies(self, handler_class: type, dependency_map: dict[str, Any]) -> dict[str, Any]:
-        required_deps = self.inspect_handler_init(handler_class)
+    def resolve_dependencies(self, handler_class: type, dependency_map: dict[Any, Any]) -> dict[str, Any]:
+        try:
+            sig = inspect.signature(handler_class.__init__)  # type: ignore[misc]
+        except (ValueError, TypeError) as e:
+            raise MissingDependencyError(f"Failed to inspect {handler_class.__name__}.__init__: {e}")
+
         resolved = {}
 
-        for dep_name, dep_type in required_deps.items():
-            if dep_name not in dependency_map:
+        for param_name, param in sig.parameters.items():
+            if param_name == "self":
+                continue
+
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+                continue
+
+            annotation = param.annotation
+            has_default = param.default is not inspect.Parameter.empty
+
+            value = self._lookup(annotation, dependency_map)
+
+            if value is _SENTINEL:
+                if has_default:
+                    continue
                 raise MissingDependencyError(
-                    f"{handler_class.__name__} requires '{dep_name}' but it was not provided in dependency_map"
+                    f"{handler_class.__name__} parameter '{param_name}: {annotation!r}' "
+                    f"is not registered in dependency_map"
                 )
 
-            value = dependency_map[dep_name]
-
-            # Runtime type check — skip for generic aliases (e.g. list[str]) that isinstance can't handle
-            if get_origin(dep_type) is None and isinstance(dep_type, type):
-                try:
-                    if not isinstance(value, dep_type):
-                        logger.warning(
-                            "%s: dependency '%s' expected %s but got %s",
-                            handler_class.__name__,
-                            dep_name,
-                            dep_type.__name__,
-                            type(value).__name__,
-                        )
-                except TypeError:
-                    pass
-
-            resolved[dep_name] = value
+            resolved[param_name] = value
 
         return resolved
 
-    def create_handler_instance(self, handler_class: type, dependency_map: dict[str, Any]) -> Any:
+    def _lookup(self, annotation: Any, dependency_map: dict[Any, Any]) -> Any:
+        # 1. Exact match — covers concrete types, ABCs, Protocols, and generic
+        #    aliases like Callable[[], UnitOfWork] which are hashable and equality-comparable
+        if annotation in dependency_map:
+            return dependency_map[annotation]
+
+        # 2. Unwrap Union (X | Y, Optional[X]) — try each member in order
+        if get_origin(annotation) is Union:
+            for arg in get_args(annotation):
+                if arg in dependency_map:
+                    return dependency_map[arg]
+
+        # 3. Subclass fallback for ABCs and base classes
+        if isinstance(annotation, type):
+            for registered_type, value in dependency_map.items():
+                if isinstance(registered_type, type):
+                    try:
+                        if issubclass(annotation, registered_type):
+                            return value
+                    except TypeError:
+                        pass
+
+        return _SENTINEL
+
+    def create_handler_instance(self, handler_class: type, dependency_map: dict[Any, Any]) -> Any:
         resolved_deps = self.resolve_dependencies(handler_class, dependency_map)
 
         try:
