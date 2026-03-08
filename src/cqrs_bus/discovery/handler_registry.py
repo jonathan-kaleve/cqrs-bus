@@ -7,7 +7,7 @@ from cqrs_bus.discovery.exceptions import DuplicateHandlerError
 class HandlerMetadata:
     handler_class: type
     command_or_query_type: type
-    dependencies: list[str]
+    dependencies: dict[str, type]
     module_path: str
 
 

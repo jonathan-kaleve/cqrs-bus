@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from cqrs_bus.discovery.dependency_resolver import DependencyResolver
@@ -37,17 +39,17 @@ class TestInspectHandlerInit:
     def test_no_dependencies(self):
         resolver = DependencyResolver()
         deps = resolver.inspect_handler_init(NoDepsHandler)
-        assert deps == []
+        assert deps == {}
 
     def test_single_dependency(self):
         resolver = DependencyResolver()
         deps = resolver.inspect_handler_init(SingleDepHandler)
-        assert deps == ["service_a"]
+        assert deps == {"service_a": ServiceA}
 
     def test_multiple_dependencies(self):
         resolver = DependencyResolver()
         deps = resolver.inspect_handler_init(MultiDepHandler)
-        assert deps == ["service_a", "service_b"]
+        assert deps == {"service_a": ServiceA, "service_b": ServiceB}
 
     def test_missing_annotation_raises(self):
         resolver = DependencyResolver()
@@ -96,6 +98,13 @@ class TestResolveDependencies:
         resolved = resolver.resolve_dependencies(NoDepsHandler, {})
         assert resolved == {}
 
+    def test_type_mismatch_logs_warning(self, caplog):
+        resolver = DependencyResolver()
+        with caplog.at_level(logging.WARNING, logger="cqrs_bus.discovery.dependency_resolver"):
+            resolved = resolver.resolve_dependencies(SingleDepHandler, {"service_a": "wrong_type"})
+        assert any("expected ServiceA" in r.message for r in caplog.records)
+        assert resolved == {"service_a": "wrong_type"}  # still resolves; warning only
+
 
 class TestCreateHandlerInstance:
     def test_creates_instance_no_deps(self):
@@ -125,6 +134,6 @@ class TestCreateHandlerInstance:
                     raise TypeError("count must be int")
                 self.count = count
 
-        # Constructor raises TypeError which create_handler_instance wraps as MissingDependencyError
+        # Type mismatch is warned (not raised); constructor TypeError wraps as MissingDependencyError
         with pytest.raises(MissingDependencyError):
             resolver.create_handler_instance(StrictHandler, {"count": "not-an-int"})

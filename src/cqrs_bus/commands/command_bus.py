@@ -46,7 +46,7 @@ class CommandBus:
     async def dispatch(self, command: TCommand) -> Any:
         command_type = type(command)
         command_name = command_type.__name__
-        command_id = str(uuid4())[:8]
+        command_id = str(uuid4())
 
         if command_type not in self._handlers:
             logger.error(
@@ -102,7 +102,9 @@ class CommandBus:
                 self._on_dispatch(command_name, duration, e)
 
             logger.error(
-                f"[CommandBus] Failed: {command_name} - {error_type}: {str(e)[:200]}",
+                "[CommandBus] Failed: %s - %s",
+                command_name,
+                error_type,
                 extra={"command_id": command_id, "command_type": command_name, "error_type": error_type},
                 exc_info=True,
             )

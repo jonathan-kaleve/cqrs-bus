@@ -16,8 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class HandlerDiscovery:
-    def __init__(self, base_package: str):
+    def __init__(self, base_package: str, strict: bool = False):
+        if not all(part.isidentifier() for part in base_package.split(".")):
+            raise ValueError(
+                f"Invalid base_package '{base_package}': must be a valid Python package path "
+                f"(e.g. 'myapp.handlers')"
+            )
         self.base_package = base_package
+        self.strict = strict
         self.registry = HandlerRegistry()
         self.resolver = DependencyResolver()
 
@@ -54,7 +60,8 @@ class HandlerDiscovery:
         for _importer, module_name, _is_pkg in pkgutil.walk_packages(
             base_module.__path__, prefix=f"{self.base_package}."
         ):
-            if "shared" in module_name and f".{subdir}" not in module_name:
+            module_parts = module_name.split(".")
+            if "shared" in module_parts and f".{subdir}" not in module_name:
                 continue
 
             if subdir not in module_name:
@@ -66,9 +73,13 @@ class HandlerDiscovery:
             except ImportError as e:
                 logger.error(f"Failed to import {module_name}: {e}")
                 logger.debug(traceback.format_exc())
+                if self.strict:
+                    raise
             except Exception as e:
                 logger.error(f"Unexpected error scanning {module_name}: {e}")
                 logger.debug(traceback.format_exc())
+                if self.strict:
+                    raise
 
         return handlers
 
@@ -96,6 +107,8 @@ class HandlerDiscovery:
             except Exception as e:
                 logger.error(f"Error processing handler {name} in {module_name}: {e}")
                 logger.debug(traceback.format_exc())
+                if self.strict:
+                    raise
 
         return handlers
 
@@ -113,6 +126,12 @@ class HandlerDiscovery:
             return False
 
         if cls.__module__ != module_name:
+            logger.debug(
+                "Skipping %s: defined in '%s', not '%s'",
+                cls.__name__,
+                cls.__module__,
+                module_name,
+            )
             return False
 
         return True

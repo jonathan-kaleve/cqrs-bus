@@ -8,7 +8,7 @@ def _make_metadata(handler_class, command_or_query_type):
     return HandlerMetadata(
         handler_class=handler_class,
         command_or_query_type=command_or_query_type,
-        dependencies=[],
+        dependencies={},
         module_path="some.module",
     )
 

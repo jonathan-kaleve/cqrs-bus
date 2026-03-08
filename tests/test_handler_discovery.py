@@ -1,4 +1,5 @@
 import importlib
+import logging
 from abc import abstractmethod
 from unittest.mock import MagicMock, patch
 
@@ -26,6 +27,28 @@ class _SampleQuery(Query):
 # ---------------------------------------------------------------------------
 # discover_all_handlers — happy path using the fake_app fixture package
 # ---------------------------------------------------------------------------
+
+
+class TestHandlerDiscoveryInit:
+    def test_invalid_base_package_raises(self):
+        with pytest.raises(ValueError, match="Invalid base_package"):
+            HandlerDiscovery("my-app.handlers")  # hyphens are not valid identifiers
+
+    def test_invalid_base_package_with_spaces_raises(self):
+        with pytest.raises(ValueError, match="Invalid base_package"):
+            HandlerDiscovery("my app")
+
+    def test_valid_base_package_accepted(self):
+        # Should not raise
+        HandlerDiscovery("fake_app.commands")
+
+    def test_strict_defaults_to_false(self):
+        d = HandlerDiscovery("fake_app")
+        assert d.strict is False
+
+    def test_strict_can_be_set(self):
+        d = HandlerDiscovery("fake_app", strict=True)
+        assert d.strict is True
 
 
 class TestDiscoverAllHandlers:
@@ -165,6 +188,59 @@ class TestExtractCommandOrQueryType:
 # ---------------------------------------------------------------------------
 # Error resilience during scanning
 # ---------------------------------------------------------------------------
+
+
+class TestStrictMode:
+    def test_strict_raises_on_import_error(self):
+        discovery = HandlerDiscovery("fake_app", strict=True)
+        original_import = importlib.import_module
+
+        def failing_import(name, *args, **kwargs):
+            if name == "fake_app.commands.create_item_handler":
+                raise ImportError("forced")
+            return original_import(name, *args, **kwargs)
+
+        with patch("cqrs_bus.discovery.handler_discovery.importlib.import_module", side_effect=failing_import):
+            with pytest.raises(ImportError, match="forced"):
+                discovery.discover_all_handlers()
+
+    def test_strict_raises_on_handler_processing_error(self):
+        discovery = HandlerDiscovery("fake_app", strict=True)
+        original_import = importlib.import_module
+
+        def import_with_bad_module(name, *args, **kwargs):
+            mod = original_import(name, *args, **kwargs)
+            return mod
+
+        # Patch _extract_command_or_query_type to raise so the handler fails processing
+        original_extract = discovery._extract_command_or_query_type
+
+        def failing_extract(cls):
+            from fake_app.commands.create_item_handler import CreateItemHandler
+
+            if cls is CreateItemHandler:
+                raise RuntimeError("extraction failed")
+            return original_extract(cls)
+
+        discovery._extract_command_or_query_type = failing_extract  # type: ignore[method-assign]
+
+        with pytest.raises(RuntimeError, match="extraction failed"):
+            discovery.discover_all_handlers()
+
+
+class TestModuleSkipLogging:
+    def test_module_mismatch_emits_debug_log(self, caplog):
+        discovery = HandlerDiscovery("fake_app")
+
+        class LocalHandler(CommandHandler[_SampleCommand, str]):
+            async def handle(self, command: _SampleCommand) -> str:
+                return "ok"
+
+        with caplog.at_level(logging.DEBUG, logger="cqrs_bus.discovery.handler_discovery"):
+            result = discovery._is_valid_handler(LocalHandler, CommandHandler, "some.other.module")
+
+        assert result is False
+        assert any("Skipping" in r.message for r in caplog.records)
 
 
 class TestScanErrorResilience:

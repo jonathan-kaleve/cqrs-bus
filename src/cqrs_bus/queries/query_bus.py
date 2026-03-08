@@ -46,7 +46,7 @@ class QueryBus:
     async def dispatch(self, query: TQuery) -> Any:
         query_type = type(query)
         query_name = query_type.__name__
-        query_id = str(uuid4())[:8]
+        query_id = str(uuid4())
 
         if query_type not in self._handlers:
             logger.error(
@@ -96,7 +96,9 @@ class QueryBus:
                 self._on_dispatch(query_name, duration, e)
 
             logger.error(
-                f"[QueryBus] Failed: {query_name} - {error_type}: {str(e)[:200]}",
+                "[QueryBus] Failed: %s - %s",
+                query_name,
+                error_type,
                 extra={"query_id": query_id, "query_type": query_name, "error_type": error_type},
                 exc_info=True,
             )
